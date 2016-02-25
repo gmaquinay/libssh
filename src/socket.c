@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <signal.h>
 #endif /* _WIN32 */
 
 #include "libssh/priv.h"
@@ -89,6 +90,7 @@ struct ssh_socket_struct {
   ssh_socket_callbacks callbacks;
   ssh_poll_handle poll_in;
   ssh_poll_handle poll_out;
+  pid_t proxycommand_pid;
 };
 
 static int ssh_socket_unbuffered_read(ssh_socket s, void *buffer, uint32_t len);
@@ -157,6 +159,7 @@ ssh_socket ssh_socket_new(ssh_session session) {
   s->data_except = 0;
   s->poll_in=s->poll_out=NULL;
   s->state=SSH_SOCKET_NONE;
+  s->proxycommand_pid = -1;
   return s;
 }
 
@@ -396,6 +399,14 @@ void ssh_socket_close(ssh_socket s){
     ssh_poll_free(s->poll_out);
     s->poll_out=NULL;
   }
+#ifndef _WIN32
+  /* kill proxycommand child process */
+  if (s->proxycommand_pid > 0){
+    if (kill(s->proxycommand_pid, SIGTERM) == 0){
+      s->proxycommand_pid = 0;
+    }
+  }
+#endif
 }
 
 /**
@@ -751,6 +762,7 @@ int ssh_socket_connect_proxycommand(ssh_socket s, const char *command){
   if(pid == 0){
     ssh_execute_command(command,out_pipe[0],in_pipe[1]);
   }
+  s->proxycommand_pid = pid;
   close(in_pipe[1]);
   close(out_pipe[0]);
   ssh_log(session,SSH_LOG_PROTOCOL,"ProxyCommand connection pipe: [%d,%d]",in_pipe[0],out_pipe[1]);
